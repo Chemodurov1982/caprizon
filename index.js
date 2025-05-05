@@ -31,6 +31,7 @@ const tokenSchema = new mongoose.Schema({
   adminId: { type: String, required: true },
   totalSupply: { type: Number, default: 0 },
   members: { type: [String], default: [] },
+  rules: { type: [String], default: [] },
 });
 
 const userSchema = new mongoose.Schema({
@@ -206,6 +207,28 @@ app.post('/api/users/search', async (req, res) => {
 });
 
 
+app.post('/api/tokens/set-rules', async (req, res) => {
+  const header = req.headers.authorization?.split(' ')[1];
+  const { tokenId, rules } = req.body;
+
+  const admin = await User.findOne({ token: header });
+  const token = await Token.findById(tokenId);
+
+  if (!admin || !token || token.adminId !== admin._id.toString()) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  token.rules = Array.isArray(rules) ? rules : [];
+  await token.save();
+
+  res.json({ success: true });
+});
+
+app.get('/api/tokens/:tokenId/rules', async (req, res) => {
+  const token = await Token.findById(req.params.tokenId);
+  if (!token) return res.status(404).json({ error: 'Token not found' });
+  res.json({ rules: token.rules });
+});
 
 // Назначить участника токена
 app.post('/api/tokens/assign-user', async (req, res) => {
