@@ -213,6 +213,12 @@ app.post('/api/users/search', async (req, res) => {
   res.json({ userId: user._id.toString() });
 });
 
+// Получить имя пользователя по userId
+app.get('/api/users/by-id/:id', async (req, res) => {
+  const user = await User.findById(req.params.id, 'name email');
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  res.json({ name: user.name, email: user.email });
+});
 
 app.post('/api/tokens/set-rules', async (req, res) => {
   const header = req.headers.authorization?.split(' ')[1];
