@@ -34,6 +34,9 @@ const tokenSchema = new mongoose.Schema({
   rules: { type: [String], default: [] },
 });
 
+// 🔒 Уникальность комбинации name + adminId
+tokenSchema.index({ name: 1, adminId: 1 }, { unique: true });
+
 const userSchema = new mongoose.Schema({
   name: String,
   email: String,
@@ -104,6 +107,10 @@ app.post('/api/tokens/create', async (req, res) => {
   const admin = await User.findOne({ token: header });
 
   if (!admin) return res.status(403).json({ error: 'Admin not found or invalid token' });
+
+  // Проверка на повтор имени у того же администратора
+  const existing = await Token.findOne({ name, adminId: admin._id.toString() });
+  if (existing) return res.status(400).json({ error: 'You already created a token with this name' });
 
   const token = new Token({
     name,
@@ -387,8 +394,18 @@ app.get('/api/requests/incoming/:ownerId', async (req, res) => {
     if (!owner || owner._id.toString() !== req.params.ownerId) {
       return res.status(403).json({ error: 'Invalid auth or ownerId mismatch' });
     }
-    const requests = await Request.find({ ownerId: owner._id.toString(), status: 'pending' }).sort({ createdAt: -1 });
-    res.json(requests);
+   const requests = await Request.find({ ownerId: owner._id.toString(), status: 'pending' }).sort({ createdAt: -1 });
+
+   const enriched = await Promise.all(requests.map(async (req) => {
+   const user = await User.findById(req.requesterId, 'name email');
+   return {
+    ...req.toObject(),
+    requesterName: user ? (user.name || user.email) : req.requesterId,
+  };
+}));
+
+res.json(enriched);
+
   } catch (err) {
     console.error('Error fetching incoming requests:', err);
     res.status(500).json({ error: 'Internal server error' });
