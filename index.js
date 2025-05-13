@@ -32,6 +32,7 @@ const tokenSchema = new mongoose.Schema({
   totalSupply: { type: Number, default: 0 },
   members: { type: [String], default: [] },
   rules: { type: [String], default: [] },
+  lastRulesUpdate: { type: Date },
 });
 
 // 🔒 Уникальность комбинации name + adminId
@@ -232,6 +233,7 @@ app.post('/api/tokens/set-rules', async (req, res) => {
   }
 
   token.rules = Array.isArray(rules) ? rules : [];
+  token.lastRulesUpdate = new Date();
   await token.save();
 
   res.json({ success: true });
