@@ -237,6 +237,33 @@ app.post('/api/tokens/set-rules', async (req, res) => {
   res.json({ success: true });
 });
 
+// Получение отправленных запросов для пользователя
+app.get('/api/requests/sent/:requesterId', async (req, res) => {
+  try {
+    const header = req.headers.authorization?.split(' ')[1];
+    const user = await User.findOne({ token: header });
+
+    if (!user || user._id.toString() !== req.params.requesterId) {
+      return res.status(403).json({ error: 'Invalid auth or requesterId mismatch' });
+    }
+
+    const requests = await Request.find({ requesterId: user._id.toString() }).sort({ createdAt: -1 });
+
+    const enriched = await Promise.all(requests.map(async (req) => {
+      const owner = await User.findById(req.ownerId, 'name email');
+      return {
+        ...req.toObject(),
+        ownerName: owner ? (owner.name || owner.email) : req.ownerId,
+      };
+    }));
+
+    res.json(enriched);
+  } catch (err) {
+    console.error('Error fetching sent requests:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.get('/api/tokens/:tokenId/rules', async (req, res) => {
   const token = await Token.findById(req.params.tokenId);
   if (!token) return res.status(404).json({ error: 'Token not found' });
