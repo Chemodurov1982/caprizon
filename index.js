@@ -85,8 +85,14 @@ app.get('/api/users/me', async (req, res) => {
   const token = req.headers.authorization?.split(' ')[1];
   const user = await User.findOne({ token }, 'name email isPremium');
   if (!user) return res.status(403).json({ error: 'Invalid token' });
-  res.json({ userId: user._id.toString(), name: user.name, email: user.email });
+  res.json({
+    userId: user._id.toString(),
+    name: user.name,
+    email: user.email,
+    isPremium: user.isPremium,
+  });
 });
+
 
 // Новая схема для запросов на токены
 const requestSchema = new mongoose.Schema({
@@ -215,6 +221,7 @@ app.post('/api/users/upgrade', async (req, res) => {
   await user.save();
   res.json({ success: true });
 });
+
 
 // Эндпоинт для поиска пользователя по e-mail
 app.post('/api/users/search', async (req, res) => {
