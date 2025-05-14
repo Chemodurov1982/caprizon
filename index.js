@@ -157,6 +157,7 @@ app.get('/api/tokens', async (req, res) => {
       totalSupply: t.totalSupply,
       adminId: t.adminId,
       members: t.members,
+      lastRulesUpdate: t.lastRulesUpdate,
     })));
   } catch (err) {
     console.error(err);
