@@ -45,6 +45,9 @@ const userSchema = new mongoose.Schema({
   token: String,
   role: { type: String, default: 'user' },
   tokenBalances: { type: Map, of: Number, default: {} },
+  isPremium: { type: Boolean, default: false },
+  transactionCount: { type: Number, default: 0 },
+  createdTokens: { type: Number, default: 0 },
 });
 
 const transactionSchema = new mongoose.Schema({
@@ -80,7 +83,7 @@ app.post('/api/register', async (req, res) => {
 // GET /api/users/me
 app.get('/api/users/me', async (req, res) => {
   const token = req.headers.authorization?.split(' ')[1];
-  const user = await User.findOne({ token }, 'name email');
+  const user = await User.findOne({ token }, 'name email isPremium');
   if (!user) return res.status(403).json({ error: 'Invalid token' });
   res.json({ userId: user._id.toString(), name: user.name, email: user.email });
 });
@@ -108,7 +111,9 @@ app.post('/api/tokens/create', async (req, res) => {
   const admin = await User.findOne({ token: header });
 
   if (!admin) return res.status(403).json({ error: 'Admin not found or invalid token' });
-
+  if (!admin.isPremium && admin.createdTokens >= 1) {
+    return res.status(403).json({ error: 'Free users can only create one token' });
+  }
   // Проверка на повтор имени у того же администратора
   const existing = await Token.findOne({ name, adminId: admin._id.toString() });
   if (existing) return res.status(400).json({ error: 'You already created a token with this name' });
@@ -119,7 +124,8 @@ app.post('/api/tokens/create', async (req, res) => {
     adminId: admin._id.toString(),
     members: [admin._id.toString()] // Добавляем администратора в список участников
   });
-
+  admin.createdTokens += 1;
+  await admin.save();
   await token.save();
 
   res.json({ tokenId: token._id.toString() });
@@ -197,6 +203,17 @@ app.post('/api/tokens/mint', async (req, res) => {
     console.error('Mint failed: ', err);
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+//Покупка подписки
+app.post('/api/users/upgrade', async (req, res) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  const user = await User.findOne({ token });
+  if (!user) return res.status(403).json({ error: 'Invalid token' });
+
+  user.isPremium = true;
+  await user.save();
+  res.json({ success: true });
 });
 
 // Эндпоинт для поиска пользователя по e-mail
@@ -380,7 +397,9 @@ app.post('/api/transfer', async (req, res) => {
   if (!from || !to || from.token !== header || isNaN(amt) || amt <= 0 || !token) {
     return res.status(400).json({ error: 'Invalid transfer' });
   }
-
+  if (!from.isPremium && from.transactionCount >= 20) {
+    return res.status(403).json({ error: 'Transaction limit reached for free users' });
+  }
   if (!token.members.includes(toUserId)) {
     return res.status(403).json({ error: 'Recipient not in token members' });
   }
@@ -391,6 +410,7 @@ app.post('/api/transfer', async (req, res) => {
   from.tokenBalances.set(tokenId, fromBal - amt);
   const toBal = to.tokenBalances.get(tokenId) || 0;
   to.tokenBalances.set(tokenId, toBal + amt);
+  from.transactionCount += 1;
   await from.save();
   await to.save();
 
