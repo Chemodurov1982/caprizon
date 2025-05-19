@@ -4,7 +4,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const mongoose = require('mongoose');
-
+const axios = require('axios');
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -213,7 +213,6 @@ app.post('/api/tokens/mint', async (req, res) => {
 });
 
 //Покупка подписки
-const axios = require('axios');
 
 app.post('/api/users/upgrade', async (req, res) => {
   const authToken = req.headers.authorization?.split(' ')[1];
