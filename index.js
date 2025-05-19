@@ -213,15 +213,46 @@ app.post('/api/tokens/mint', async (req, res) => {
 });
 
 //Покупка подписки
+const axios = require('axios');
+
 app.post('/api/users/upgrade', async (req, res) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  const user = await User.findOne({ token });
+  const authToken = req.headers.authorization?.split(' ')[1];
+  const { receipt, productId } = req.body;
+
+  if (!authToken || !receipt || !productId) {
+    return res.status(400).json({ error: 'Missing token, receipt or productId' });
+  }
+
+  const user = await User.findOne({ token: authToken });
   if (!user) return res.status(403).json({ error: 'Invalid token' });
 
-  user.isPremium = true;
-  await user.save();
-  res.json({ success: true });
+  try {
+    const response = await axios.post('https://buy.itunes.apple.com/verifyReceipt', {
+      'receipt-data': receipt,
+      'password': process.env.APPLE_SHARED_SECRET
+    });
+
+    if (response.data.status !== 0) {
+      return res.status(400).json({ error: 'Invalid receipt', status: response.data.status });
+    }
+
+    const latestInfo = response.data.latest_receipt_info || [];
+    const found = latestInfo.some(entry => entry.product_id === productId);
+
+    if (!found) {
+      return res.status(400).json({ error: 'Product ID not found in receipt' });
+    }
+
+    user.isPremium = true;
+    await user.save();
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Apple receipt verification failed:', err);
+    res.status(500).json({ error: 'Verification failed' });
+  }
 });
+
 
 
 // Эндпоинт для поиска пользователя по e-mail
