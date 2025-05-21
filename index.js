@@ -332,6 +332,7 @@ app.get('/api/requests/sent/:requesterId', async (req, res) => {
       const owner = await User.findById(req.ownerId, 'name email');
       return {
         ...req.toObject(),
+	requestId: req._id.toString(),
         ownerName: owner ? (owner.name || owner.email) : req.ownerId,
       };
     }));
