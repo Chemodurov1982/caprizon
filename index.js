@@ -252,6 +252,28 @@ app.post('/api/users/upgrade', async (req, res) => {
   }
 });
 
+// Удалить свой запрос (любой статус)
+app.delete('/api/requests/:requestId', async (req, res) => {
+  try {
+    const header = req.headers.authorization?.split(' ')[1];
+    const user = await User.findOne({ token: header });
+    if (!user) return res.status(403).json({ error: 'Invalid token' });
+
+    const { requestId } = req.params;
+    const request = await Request.findById(requestId);
+    if (!request) return res.status(404).json({ error: 'Request not found' });
+
+    if (request.requesterId !== user._id.toString()) {
+      return res.status(403).json({ error: 'You can only delete your own requests' });
+    }
+
+    await request.deleteOne();
+    res.json({ success: true, message: 'Request deleted' });
+  } catch (err) {
+    console.error('Error deleting request:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 
 // Эндпоинт для поиска пользователя по e-mail
