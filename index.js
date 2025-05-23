@@ -7,6 +7,36 @@ const mongoose = require('mongoose');
 const axios = require('axios');
 const app = express();
 const port = process.env.PORT || 3000;
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
+
+const passwordResetSchema = new mongoose.Schema({
+  email: String,
+  token: String,
+  expiresAt: Date,
+});
+
+const PasswordReset = mongoose.model('PasswordReset', passwordResetSchema);
+
+// отправка e-mail
+async function sendResetEmail(email, token) {
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    }
+  });
+
+  const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+
+  await transporter.sendMail({
+    from: `"Caprizon" <${process.env.EMAIL_USER}>`,
+    to: email,
+    subject: "Password Reset",
+    html: `<p>To reset your password, click the link below:</p><a href="${resetLink}">${resetLink}</a>`
+  });
+}
 
 
 app.use(cors());
@@ -135,6 +165,39 @@ app.post('/api/tokens/create', async (req, res) => {
   await token.save();
 
   res.json({ tokenId: token._id.toString() });
+});
+
+app.post('/api/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  const user = await User.findOne({ email });
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 15); // 15 минут
+
+  await PasswordReset.deleteMany({ email }); // удалить старые
+  await new PasswordReset({ email, token, expiresAt }).save();
+  await sendResetEmail(email, token);
+
+  res.json({ success: true });
+});
+
+app.post('/api/reset-password', async (req, res) => {
+  const { token, newPassword } = req.body;
+  const reset = await PasswordReset.findOne({ token });
+
+  if (!reset || reset.expiresAt < new Date()) {
+    return res.status(400).json({ error: 'Invalid or expired token' });
+  }
+
+  const user = await User.findOne({ email: reset.email });
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  user.password = newPassword;
+  await user.save();
+  await PasswordReset.deleteOne({ token });
+
+  res.json({ success: true });
 });
 
 // Логин
