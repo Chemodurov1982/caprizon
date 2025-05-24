@@ -28,7 +28,7 @@ async function sendResetEmail(email, token) {
     }
   });
 
-  const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+  const resetLink = `${process.env.FRONTEND_URL}/?token=${token}`;
 
   await transporter.sendMail({
     from: `"Caprizon" <${process.env.EMAIL_USER}>`,
