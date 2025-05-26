@@ -278,8 +278,11 @@ app.post('/api/tokens/mint', async (req, res) => {
 //Покупка подписки
 
 app.post('/api/users/upgrade', async (req, res) => {
+  console.log('🚀 /api/users/upgrade called');
   const authToken = req.headers.authorization?.split(' ')[1];
   const { receipt, productId } = req.body;
+  console.log('🔎 Получен receipt:', receipt?.substring(0, 30));
+  console.log('🔎 Получен productId:', productId);
 
   if (!authToken || !receipt || !productId) {
     return res.status(400).json({ error: 'Missing token, receipt or productId' });
