@@ -288,31 +288,43 @@ app.post('/api/users/upgrade', async (req, res) => {
   const user = await User.findOne({ token: authToken });
   if (!user) return res.status(403).json({ error: 'Invalid token' });
 
-  try {
-    const response = await axios.post('https://buy.itunes.apple.com/verifyReceipt', {
-      'receipt-data': receipt,
-      'password': process.env.APPLE_SHARED_SECRET
+try {
+  const payload = {
+    'receipt-data': receipt,
+    'password': process.env.APPLE_SHARED_SECRET
+  };
+
+  // 🔹 Шаг 1: Проверка в Production
+  let response = await axios.post('https://buy.itunes.apple.com/verifyReceipt', payload, {
+    headers: { 'Content-Type': 'application/json' }
+  });
+
+  // 🔄 Если это Sandbox-чек, повторим запрос
+  if (response.data.status === 21007) {
+    response = await axios.post('https://sandbox.itunes.apple.com/verifyReceipt', payload, {
+      headers: { 'Content-Type': 'application/json' }
     });
-
-    if (response.data.status !== 0) {
-      return res.status(400).json({ error: 'Invalid receipt', status: response.data.status });
-    }
-
-    const latestInfo = response.data.latest_receipt_info || [];
-    const found = latestInfo.some(entry => entry.product_id === productId);
-
-    if (!found) {
-      return res.status(400).json({ error: 'Product ID not found in receipt' });
-    }
-
-    user.isPremium = true;
-    await user.save();
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Apple receipt verification failed:', err);
-    res.status(500).json({ error: 'Verification failed' });
   }
+
+  if (response.data.status !== 0) {
+    return res.status(400).json({ error: 'Invalid receipt', status: response.data.status });
+  }
+
+  const latestInfo = response.data.latest_receipt_info || [];
+  const found = latestInfo.some(entry => entry.product_id === productId);
+
+  if (!found) {
+    return res.status(400).json({ error: 'Product ID not found in receipt' });
+  }
+
+  user.isPremium = true;
+  await user.save();
+
+  res.json({ success: true });
+} catch (err) {
+  console.error('Apple receipt verification failed:', err);
+  res.status(500).json({ error: 'Verification failed' });
+}
 });
 
 // Удалить свой запрос (любой статус)
