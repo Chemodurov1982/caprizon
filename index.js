@@ -305,13 +305,17 @@ try {
   
   console.log("📡 Production verifyReceipt response:", response.data);
 
-  // 🔄 Если это Sandbox-чек, повторим запрос
-  if (response.data.status === 21007) {
-    response = await axios.post('https://sandbox.itunes.apple.com/verifyReceipt', payload, {
-      headers: { 'Content-Type': 'application/json' }
-    });
-  }
-  console.log("🔁 Sandbox verifyReceipt response:", response.data);
+// 🔄 Если это Sandbox-чек, повторим запрос
+if (response.data.status === 21007) {
+  console.log("ℹ️ Статус 21007 — пробуем Sandbox...");
+  const sandboxResponse = await axios.post('https://sandbox.itunes.apple.com/verifyReceipt', payload, {
+    headers: { 'Content-Type': 'application/json' }
+  });
+  console.log("📦 Ответ от Apple (Sandbox):", JSON.stringify(sandboxResponse.data, null, 2));
+  response = sandboxResponse;
+} else {
+  console.log("📦 Ответ от Apple (Production):", JSON.stringify(response.data, null, 2));
+}
 
   if (response.data.status !== 0) {
     console.error("❌ Apple returned error status:", response.data.status, response.data);
