@@ -283,6 +283,7 @@ app.post('/api/users/upgrade', async (req, res) => {
   const { receipt, productId } = req.body;
   console.log('🔎 Получен receipt:', receipt?.substring(0, 30));
   console.log('🔎 Получен productId:', productId);
+  console.log("🧾 Received receipt and productId:", { productId, shortReceipt: receipt?.slice(0, 30) + '...' });
 
   if (!authToken || !receipt || !productId) {
     return res.status(400).json({ error: 'Missing token, receipt or productId' });
@@ -301,6 +302,8 @@ try {
   let response = await axios.post('https://buy.itunes.apple.com/verifyReceipt', payload, {
     headers: { 'Content-Type': 'application/json' }
   });
+  
+  console.log("📡 Production verifyReceipt response:", response.data);
 
   // 🔄 Если это Sandbox-чек, повторим запрос
   if (response.data.status === 21007) {
@@ -308,11 +311,13 @@ try {
       headers: { 'Content-Type': 'application/json' }
     });
   }
+  console.log("🔁 Sandbox verifyReceipt response:", response.data);
 
   if (response.data.status !== 0) {
+    console.error("❌ Apple returned error status:", response.data.status, response.data);
     return res.status(400).json({ error: 'Invalid receipt', status: response.data.status });
   }
-
+  
   const latestInfo = response.data.latest_receipt_info || [];
   const found = latestInfo.some(entry => entry.product_id === productId);
 
