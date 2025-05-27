@@ -311,14 +311,15 @@ if (response.data.status === 21007) {
   const sandboxResponse = await axios.post('https://sandbox.itunes.apple.com/verifyReceipt', payload, {
     headers: { 'Content-Type': 'application/json' }
   });
-  console.log("📦 Ответ от Apple (Sandbox):", JSON.stringify(sandboxResponse.data, null, 2));
   response = sandboxResponse;
-} else {
-  console.log("📦 Ответ от Apple (Production):", JSON.stringify(response.data, null, 2));
 }
 
+// Логируем финальный ответ — независимо от источника
+console.log("📦 Финальный ответ от Apple:", JSON.stringify(response.data, null, 2));
+
+
   if (response.data.status !== 0) {
-    console.error("❌ Apple returned error status:", response.data.status, response.data);
+    console.error("❌ Ошибка от Apple:", JSON.stringify(response.data, null, 2));
     return res.status(400).json({ error: 'Invalid receipt', status: response.data.status });
   }
   
