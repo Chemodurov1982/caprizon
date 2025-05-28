@@ -9,6 +9,8 @@ const app = express();
 const port = process.env.PORT || 3000;
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
+
 
 const passwordResetSchema = new mongoose.Schema({
   email: String,
@@ -42,11 +44,6 @@ async function sendResetEmail(email, token) {
 app.use(cors());
 app.use(bodyParser.json());
 
-try {
-  const authenticate = require('./middleware/authenticate');
-} catch (err) {
-  console.error('❌ Не удалось подключить middleware/authenticate:', err);
-}
 
 
 // Подключение к MongoDB
@@ -710,15 +707,27 @@ app.get('/api/users/token/:tokenId', async (req, res) => {
 });
 
 
-// DELETE /api/users/delete
-app.delete('/api/users/delete', authenticate, async (req, res) => {
+app.delete('/api/users/delete', async (req, res) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Token missing' });
+  }
+
   try {
-    const userId = req.user.id;
-    await User.findByIdAndDelete(userId);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    await user.deleteOne();
     res.json({ success: true, message: 'Account deleted' });
-  } catch (error) {
-    console.error('❌ Error deleting account:', error);
-    res.status(500).json({ error: 'Failed to delete account' });
+  } catch (err) {
+    console.error('❌ Error deleting account:', err);
+    res.status(403).json({ error: 'Invalid token or server error' });
   }
 });
 
