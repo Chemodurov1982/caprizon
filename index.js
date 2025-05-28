@@ -42,6 +42,13 @@ async function sendResetEmail(email, token) {
 app.use(cors());
 app.use(bodyParser.json());
 
+try {
+  const authenticate = require('./middleware/authenticate');
+} catch (err) {
+  console.error('❌ Не удалось подключить middleware/authenticate:', err);
+}
+
+
 // Подключение к MongoDB
 //mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
 
@@ -702,9 +709,6 @@ app.get('/api/users/token/:tokenId', async (req, res) => {
   res.json(users);
 });
 
-
-// middleware: проверка токена
-const authenticate = require('./middleware/authenticate');
 
 // DELETE /api/users/delete
 app.delete('/api/users/delete', authenticate, async (req, res) => {
