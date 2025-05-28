@@ -151,7 +151,10 @@ app.post('/api/tokens/create', async (req, res) => {
   const { name, symbol } = req.body;
 
   const admin = await User.findOne({ token: header });
-
+console.log('▶️ Проверка создания токена');
+console.log('admin.token =', admin.token);
+console.log('admin.isPremium =', admin.isPremium, '| typeof:', typeof admin.isPremium);
+console.log('admin.createdTokens =', admin.createdTokens, '| typeof:', typeof admin.createdTokens);
   if (!admin) return res.status(403).json({ error: 'Admin not found or invalid token' });
   if (!admin.isPremium && admin.createdTokens >= 1) {
     return res.status(403).json({ error: 'Free users can only create one token' });
