@@ -324,11 +324,23 @@ console.log("📦 Финальный ответ от Apple:", JSON.stringify(res
   }
   
   const latestInfo = response.data.latest_receipt_info || [];
+  
+//const found = latestInfo.some(entry => entry.product_id === productId);
+//
+// if (!found) {
+//    return res.status(400).json({ error: 'Product ID not found in receipt' });
+//  }
+	
   const found = latestInfo.some(entry => entry.product_id === productId);
+if (!found && response.data.environment === 'Sandbox') {
+  console.log('⚠️ Игнорируем productId проверку в Sandbox');
+  // continue anyway
+} else if (!found) {
+  return res.status(400).json({ error: 'Product ID not found in receipt' });
+}
 
-  if (!found) {
-    return res.status(400).json({ error: 'Product ID not found in receipt' });
-  }
+
+
 
   user.isPremium = true;
   await user.save();
