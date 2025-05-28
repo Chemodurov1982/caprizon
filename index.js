@@ -104,11 +104,13 @@ app.post('/api/register', async (req, res) => {
   if (existing) return res.status(400).json({ error: 'Email already registered' });
 
   const user = new User({
-    name,
-    email,
-    password,
-    token: 'token-' + Math.random().toString(36).substr(2),
-  });
+  name,
+  email,
+  password,
+  token: 'token-' + Math.random().toString(36).substr(2),
+  createdTokens: 0,       
+  isPremium: false,       
+});
 
   await user.save();
   res.json({ token: user.token, userId: user._id.toString() });
