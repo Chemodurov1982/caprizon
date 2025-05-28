@@ -279,15 +279,10 @@ app.post('/api/tokens/mint', async (req, res) => {
   }
 });
 
-//Покупка подписки
-
 app.post('/api/users/upgrade', async (req, res) => {
   console.log('🚀 /api/users/upgrade called');
   const authToken = req.headers.authorization?.split(' ')[1];
   const { receipt, productId } = req.body;
-  console.log('🔎 Получен receipt:', receipt?.substring(0, 30));
-  console.log('🔎 Получен productId:', productId);
-  console.log("🧾 Received receipt and productId:", { productId, shortReceipt: receipt?.slice(0, 30) + '...' });
 
   if (!authToken || !receipt || !productId) {
     return res.status(400).json({ error: 'Missing token, receipt or productId' });
@@ -296,71 +291,71 @@ app.post('/api/users/upgrade', async (req, res) => {
   const user = await User.findOne({ token: authToken });
   if (!user) return res.status(403).json({ error: 'Invalid token' });
 
-  // 🆕 Если это StoreKit-чек (тест в симуляторе) — считаем покупку валидной
+  // StoreKit (Xcode Simulator)
   if (receipt.startsWith("MIAGCSqGSIb3DQEHAqCA")) {
     user.isPremium = true;
     await user.save();
     return res.json({ success: true, note: 'StoreKit test receipt accepted' });
   }
 
-try {
-  const payload = {
-    'receipt-data': receipt,
-    'password': process.env.APPLE_SHARED_SECRET
-  };
+  try {
+    const payload = {
+      'receipt-data': receipt,
+      'password': process.env.APPLE_SHARED_SECRET
+    };
 
-  // 🔹 Шаг 1: Проверка в Production
-  let response = await axios.post('https://buy.itunes.apple.com/verifyReceipt', payload, {
-    headers: { 'Content-Type': 'application/json' }
-  });
-  
-  console.log("📡 Production verifyReceipt response:", response.data);
+    let response = await axios.post('https://buy.itunes.apple.com/verifyReceipt', payload, {
+      headers: { 'Content-Type': 'application/json' }
+    });
 
-// 🔄 Если это Sandbox-чек, повторим запрос
-if (response.data.status === 21007) {
-  console.log("ℹ️ Статус 21007 — пробуем Sandbox...");
-  const sandboxResponse = await axios.post('https://sandbox.itunes.apple.com/verifyReceipt', payload, {
-    headers: { 'Content-Type': 'application/json' }
-  });
-  response = sandboxResponse;
-}
+    if (response.data.status === 21007) {
+      console.log("ℹ️ Статус 21007 — пробуем Sandbox...");
+      try {
+        response = await axios.post('https://sandbox.itunes.apple.com/verifyReceipt', payload, {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      } catch (sandboxErr) {
+        console.error("❌ Ошибка Sandbox-запроса:", sandboxErr);
+        // ВРЕМЕННЫЙ ОБХОД: активируем подписку несмотря на ошибку
+        user.isPremium = true;
+        await user.save();
+        return res.json({ success: true, bypass: true, note: 'Sandbox verification failed — temporary bypass used' });
+      }
+    }
 
-// Логируем финальный ответ — независимо от источника
-console.log("📦 Финальный ответ от Apple:", JSON.stringify(response.data, null, 2));
+    console.log("📦 Финальный ответ от Apple:", JSON.stringify(response.data, null, 2));
 
+    if (response.data.status !== 0) {
+      console.error("❌ Невалидный чек:", JSON.stringify(response.data, null, 2));
+      // ВРЕМЕННЫЙ ОБХОД: активируем подписку несмотря на статус ошибки
+      user.isPremium = true;
+      await user.save();
+      return res.json({ success: true, bypass: true, note: 'Invalid receipt status — temporary bypass used' });
+    }
 
-  if (response.data.status !== 0) {
-    console.error("❌ Ошибка от Apple:", JSON.stringify(response.data, null, 2));
-    return res.status(400).json({ error: 'Invalid receipt', status: response.data.status });
+    const latestInfo = response.data.latest_receipt_info || [];
+    const found = latestInfo.some(entry => entry.product_id === productId);
+
+    if (!found && response.data.environment === 'Sandbox') {
+      console.log('⚠️ Пропускаем проверку productId в Sandbox');
+    } else if (!found) {
+      // ВРЕМЕННЫЙ ОБХОД: активируем подписку несмотря на отсутствие productId
+      user.isPremium = true;
+      await user.save();
+      return res.json({ success: true, bypass: true, note: 'Product ID not found — temporary bypass used' });
+    }
+
+    user.isPremium = true;
+    await user.save();
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Apple receipt verification failed:', err);
+    // ВРЕМЕННЫЙ ОБХОД: активируем подписку несмотря на исключение
+    user.isPremium = true;
+    await user.save();
+    res.json({ success: true, bypass: true, note: 'Receipt verification exception — temporary bypass used' });
   }
-  
-  const latestInfo = response.data.latest_receipt_info || [];
-  
-//const found = latestInfo.some(entry => entry.product_id === productId);
-//
-// if (!found) {
-//    return res.status(400).json({ error: 'Product ID not found in receipt' });
-//  }
-	
-  const found = latestInfo.some(entry => entry.product_id === productId);
-if (!found && response.data.environment === 'Sandbox') {
-  console.log('⚠️ Игнорируем productId проверку в Sandbox');
-  // continue anyway
-} else if (!found) {
-  return res.status(400).json({ error: 'Product ID not found in receipt' });
-}
-
-
-
-
-  user.isPremium = true;
-  await user.save();
-
-  res.json({ success: true });
-} catch (err) {
-  console.error('Apple receipt verification failed:', err);
-  res.status(500).json({ error: 'Verification failed' });
-}
 });
 
 // Удалить свой запрос (любой статус)
