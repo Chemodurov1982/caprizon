@@ -703,6 +703,22 @@ app.get('/api/users/token/:tokenId', async (req, res) => {
 });
 
 
+// middleware: проверка токена
+const authenticate = require('./middleware/authenticate');
+
+// DELETE /api/users/delete
+app.delete('/api/users/delete', authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    await User.findByIdAndDelete(userId);
+    res.json({ success: true, message: 'Account deleted' });
+  } catch (error) {
+    console.error('❌ Error deleting account:', error);
+    res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
+
 // История транзакций по токену с отображением имён
 app.get('/api/transactions/token/:tokenId', async (req, res) => {
   try {
