@@ -283,6 +283,7 @@ app.post('/api/users/upgrade', async (req, res) => {
   console.log('🚀 /api/users/upgrade called');
   const authToken = req.headers.authorization?.split(' ')[1];
   console.log('🔐 Получен authToken:', authToken);
+  console.log('📨 Authorization header:', req.headers.authorization);
   const { receipt, productId } = req.body;
 
   if (!authToken || !receipt || !productId) {
