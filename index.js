@@ -716,9 +716,7 @@ app.delete('/api/users/delete', async (req, res) => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id);
-
+    const user = await User.findOne({ token });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -727,9 +725,10 @@ app.delete('/api/users/delete', async (req, res) => {
     res.json({ success: true, message: 'Account deleted' });
   } catch (err) {
     console.error('❌ Error deleting account:', err);
-    res.status(403).json({ error: 'Invalid token or server error' });
+    res.status(500).json({ error: 'Server error' });
   }
 });
+
 
 
 // История транзакций по токену с отображением имён
