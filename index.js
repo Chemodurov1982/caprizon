@@ -282,6 +282,7 @@ app.post('/api/tokens/mint', async (req, res) => {
 app.post('/api/users/upgrade', async (req, res) => {
   console.log('🚀 /api/users/upgrade called');
   const authToken = req.headers.authorization?.split(' ')[1];
+  console.log('🔐 Получен authToken:', authToken);
   const { receipt, productId } = req.body;
 
   if (!authToken || !receipt || !productId) {
