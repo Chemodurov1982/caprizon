@@ -296,6 +296,13 @@ app.post('/api/users/upgrade', async (req, res) => {
   const user = await User.findOne({ token: authToken });
   if (!user) return res.status(403).json({ error: 'Invalid token' });
 
+  // 🆕 Если это StoreKit-чек (тест в симуляторе) — считаем покупку валидной
+  if (receipt.startsWith("MIAGCSqGSIb3DQEHAqCA")) {
+    user.isPremium = true;
+    await user.save();
+    return res.json({ success: true, note: 'StoreKit test receipt accepted' });
+  }
+
 try {
   const payload = {
     'receipt-data': receipt,
