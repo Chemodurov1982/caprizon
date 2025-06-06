@@ -301,6 +301,7 @@ app.post('/api/users/upgrade', async (req, res) => {
   // StoreKit (Xcode Simulator)
   if (receipt.startsWith("MIAGCSqGSIb3DQEHAqCA")) {
     user.isPremium = true;
+    user.latestReceipt = receipt;
     await user.save();
     return res.json({ success: true, note: 'StoreKit test receipt accepted' });
   }
@@ -738,6 +739,52 @@ app.delete('/api/users/delete', async (req, res) => {
   }
 });
 
+// ✅ Новый эндпоинт: проверка подписки пользователя
+app.get('/api/users/check-subscription', async (req, res) => {
+  const authToken = req.headers.authorization?.split(' ')[1];
+  if (!authToken) return res.status(401).json({ error: 'Missing token' });
+
+  const user = await User.findOne({ token: authToken });
+  if (!user) return res.status(403).json({ error: 'Invalid token' });
+
+    if (!user.latestReceipt) {
+    return res.json({ isPremium: user.isPremium, note: 'No receipt available' });
+  }
+
+  try {
+    const payload = {
+      'receipt-data': user.latestReceipt,
+      'password': process.env.APPLE_SHARED_SECRET
+    };
+
+    let response = await axios.post('https://buy.itunes.apple.com/verifyReceipt', payload, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    if (response.data.status === 21007) {
+      response = await axios.post('https://sandbox.itunes.apple.com/verifyReceipt', payload, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (response.data.status !== 0) {
+      return res.status(400).json({ error: 'Invalid receipt', status: response.data.status });
+    }
+
+    const now = Date.now();
+    const active = (response.data.latest_receipt_info || []).some(entry => {
+      return entry.expires_date_ms && parseInt(entry.expires_date_ms) > now;
+    });
+
+    user.isPremium = active;
+    await user.save();
+
+    res.json({ isPremium: active });
+  } catch (err) {
+    console.error('❌ Subscription check failed:', err);
+    res.status(500).json({ error: 'Subscription check failed' });
+  }
+});
 
 
 // История транзакций по токену с отображением имён
