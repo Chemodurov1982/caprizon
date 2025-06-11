@@ -301,6 +301,7 @@ app.post('/api/users/upgrade', async (req, res) => {
   // StoreKit (Xcode Simulator)
   if (receipt.startsWith("MIAGCSqGSIb3DQEHAqCA")) {
     user.isPremium = true;
+    user.latestReceipt = receipt;
     await user.save();
     return res.json({ success: true, note: 'StoreKit test receipt accepted' });
   }

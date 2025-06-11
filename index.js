@@ -20,6 +20,13 @@ const passwordResetSchema = new mongoose.Schema({
 
 const PasswordReset = mongoose.model('PasswordReset', passwordResetSchema);
 
+const promoCodeSchema = new mongoose.Schema({
+  code: { type: String, required: true, unique: true },
+  expiresAt: { type: Date, required: true },
+});
+
+const PromoCode = mongoose.model('PromoCode', promoCodeSchema);
+
 // отправка e-mail
 async function sendResetEmail(email, token) {
   const transporter = nodemailer.createTransport({
@@ -80,6 +87,7 @@ const userSchema = new mongoose.Schema({
   role: { type: String, default: 'user' },
   tokenBalances: { type: Map, of: Number, default: {} },
   isPremium: { type: Boolean, default: false },
+  premiumUntil: { type: Date },
   transactionCount: { type: Number, default: 0 },
   createdTokens: { type: Number, default: 0 },
 });
@@ -121,6 +129,11 @@ app.get('/api/users/me', async (req, res) => {
   const token = req.headers.authorization?.split(' ')[1];
   const user = await User.findOne({ token }, 'name email isPremium');
   if (!user) return res.status(403).json({ error: 'Invalid token' });
+ if (user.premiumUntil && user.premiumUntil < new Date()) {
+    user.isPremium = false;
+    await user.save();
+  }
+
   res.json({
     userId: user._id.toString(),
     name: user.name,
@@ -190,6 +203,41 @@ app.post('/api/forgot-password', async (req, res) => {
 
   res.json({ success: true });
 });
+
+// промо код 
+app.post('/api/promo-codes/redeem', async (req, res) => {
+  const { code } = req.body;
+  const authToken = req.headers.authorization?.split(' ')[1];
+  const user = await User.findOne({ token: authToken });
+  if (!user) return res.status(403).json({ error: 'Invalid token' });
+
+  const promo = await PromoCode.findOne({ code });
+  if (!promo) return res.status(404).json({ error: 'Promo code not found' });
+  if (promo.expiresAt < new Date()) return res.status(400).json({ error: 'Promo code expired' });
+
+  // Назначаем Premium до +1 года
+  const oneYearLater = new Date();
+  oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
+  user.isPremium = true;
+  user.premiumUntil = oneYearLater;
+  await user.save();
+
+  res.json({ success: true, message: 'Premium activated for 1 year using promo code' });
+});
+
+// Создание единственного промо-кода FRIENDS2025 (для админа или вручную)
+app.post('/api/promo-codes/create-once', async (req, res) => {
+  const existing = await PromoCode.findOne({ code: 'WELCOME2025' });
+  if (existing) return res.status(400).json({ error: 'Promo code already exists' });
+
+  await new PromoCode({
+    code: 'FRIENDS2025',
+    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 1 месяц
+  }).save();
+
+  res.json({ success: true });
+});
+
 
 app.post('/api/reset-password', async (req, res) => {
   const { token, newPassword } = req.body;
