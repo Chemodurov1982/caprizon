@@ -227,7 +227,7 @@ app.post('/api/promo-codes/redeem', async (req, res) => {
 
 // Создание единственного промо-кода FRIENDS2025 (для админа или вручную)
 app.post('/api/promo-codes/create-once', async (req, res) => {
-  const existing = await PromoCode.findOne({ code: 'WELCOME2025' });
+  const existing = await PromoCode.findOne({ code: 'FRIENDS2025' });
   if (existing) return res.status(400).json({ error: 'Promo code already exists' });
 
   await new PromoCode({
