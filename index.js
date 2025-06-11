@@ -221,6 +221,7 @@ app.post('/api/promo-codes/redeem', async (req, res) => {
   user.isPremium = true;
   user.premiumUntil = oneYearLater;
   await user.save();
+  user.latestReceipt = 'PROMO'; // чтобы `check-subscription` не перезаписывал isPremium
 
   res.json({ success: true, message: 'Premium activated for 1 year using promo code' });
 });
@@ -795,7 +796,7 @@ app.get('/api/users/check-subscription', async (req, res) => {
   const user = await User.findOne({ token: authToken });
   if (!user) return res.status(403).json({ error: 'Invalid token' });
 
-    if (!user.latestReceipt) {
+    if (!user.latestReceipt || user.latestReceipt === 'PROMO') {
     return res.json({ isPremium: user.isPremium, note: 'No receipt available' });
   }
 
