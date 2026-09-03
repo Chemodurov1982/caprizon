@@ -742,7 +742,12 @@ app.get('/api/transactions/token/:tokenId', async (req, res) => {
     const user = await authenticatedUser(req);
     if (!user) return res.status(403).json({ error: 'Invalid token' });
     const token = await Token.findById(req.params.tokenId);
-    if (!token || !token.members.includes(user._id.toString())) {
+    if (!token) return res.status(404).json({ error: 'Token not found' });
+
+    const userId = user._id.toString();
+    const memberIds = (token.members || []).map((memberId) => memberId.toString());
+    const isTokenAdmin = token.adminId?.toString() === userId;
+    if (!isTokenAdmin && !memberIds.includes(userId)) {
       return res.status(403).json({ error: 'Access denied' });
     }
     const txs = await Transaction.find({ tokenId: req.params.tokenId }).sort({ timestamp: -1 });
@@ -760,6 +765,10 @@ app.get('/api/transactions/token/:tokenId', async (req, res) => {
 
       return {
         ...tx.toObject(),
+        _id: tx._id.toString(),
+        from: tx.from?.toString() || '',
+        to: tx.to?.toString() || '',
+        tokenId: tx.tokenId?.toString() || req.params.tokenId,
         fromName: fromUser ? (fromUser.name || fromUser.email) : tx.from,
         toName: toUser ? (toUser.name || toUser.email) : tx.to,
       };
