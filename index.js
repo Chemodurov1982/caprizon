@@ -4,12 +4,11 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const mongoose = require('mongoose');
-const axios = require('axios');
+const bcrypt = require('bcryptjs');
 const app = express();
 const port = process.env.PORT || 3000;
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
-const jwt = require('jsonwebtoken');
 
 
 const passwordResetSchema = new mongoose.Schema({
@@ -19,13 +18,6 @@ const passwordResetSchema = new mongoose.Schema({
 });
 
 const PasswordReset = mongoose.model('PasswordReset', passwordResetSchema);
-
-const promoCodeSchema = new mongoose.Schema({
-  code: { type: String, required: true, unique: true },
-  expiresAt: { type: Date, required: true },
-});
-
-const PromoCode = mongoose.model('PromoCode', promoCodeSchema);
 
 // отправка e-mail
 async function sendResetEmail(email, token) {
@@ -48,7 +40,19 @@ async function sendResetEmail(email, token) {
 }
 
 
-app.use(cors());
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Origin is not allowed by CORS'));
+  },
+}));
 app.use(bodyParser.json());
 
 
@@ -56,10 +60,7 @@ app.use(bodyParser.json());
 // Подключение к MongoDB
 //mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
 
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+mongoose.connect(process.env.MONGODB_URI);
 
 const db = mongoose.connection;
 db.on('error', console.error.bind(console, 'MongoDB error:'));
@@ -105,19 +106,53 @@ const User = mongoose.model('User', userSchema);
 const Token = mongoose.model('Token', tokenSchema);
 const Transaction = mongoose.model('Transaction', transactionSchema);
 
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function exactEmailPattern(value) {
+  const escaped = String(value || '').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${escaped}$`, 'i');
+}
+
+async function verifyPassword(user, candidate) {
+  const stored = String(user.password || '');
+  if (stored.startsWith('$2')) {
+    return bcrypt.compare(candidate, stored);
+  }
+
+  if (stored !== candidate) return false;
+
+  // Transparently upgrade legacy plaintext passwords after a valid login.
+  user.password = await bcrypt.hash(candidate, 12);
+  await user.save();
+  return true;
+}
+
+async function authenticatedUser(req) {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return null;
+  return User.findOne({ token });
+}
+
 // Регистрация
 app.post('/api/register', async (req, res) => {
-  const { email, password, name } = req.body;
-  const existing = await User.findOne({ email });
+  const email = normalizeEmail(req.body.email);
+  const password = String(req.body.password || '');
+  const name = String(req.body.name || '').trim();
+  if (!email || !name || password.length < 8) {
+    return res.status(400).json({ error: 'Name, valid email and password of at least 8 characters are required' });
+  }
+  const existing = await User.findOne({ email: exactEmailPattern(email) });
   if (existing) return res.status(400).json({ error: 'Email already registered' });
 
   const user = new User({
   name,
   email,
-  password,
-  token: 'token-' + Math.random().toString(36).substr(2),
+  password: await bcrypt.hash(password, 12),
+  token: `token-${crypto.randomBytes(32).toString('hex')}`,
   createdTokens: 0,       
-  isPremium: false,       
+  isPremium: true,
 });
 
   await user.save();
@@ -127,18 +162,14 @@ app.post('/api/register', async (req, res) => {
 // GET /api/users/me
 app.get('/api/users/me', async (req, res) => {
   const token = req.headers.authorization?.split(' ')[1];
-  const user = await User.findOne({ token }, 'name email isPremium');
+  const user = await User.findOne({ token }, 'name email');
   if (!user) return res.status(403).json({ error: 'Invalid token' });
- if (user.premiumUntil && user.premiumUntil < new Date()) {
-    user.isPremium = false;
-    await user.save();
-  }
 
   res.json({
     userId: user._id.toString(),
     name: user.name,
     email: user.email,
-    isPremium: user.isPremium,
+    isPremium: true,
   });
 });
 
@@ -164,14 +195,7 @@ app.post('/api/tokens/create', async (req, res) => {
   const { name, symbol } = req.body;
 
   const admin = await User.findOne({ token: header });
-console.log('▶️ Проверка создания токена');
-console.log('admin.token =', admin.token);
-console.log('admin.isPremium =', admin.isPremium, '| typeof:', typeof admin.isPremium);
-console.log('admin.createdTokens =', admin.createdTokens, '| typeof:', typeof admin.createdTokens);
   if (!admin) return res.status(403).json({ error: 'Admin not found or invalid token' });
-  if (!admin.isPremium && admin.createdTokens >= 1) {
-    return res.status(403).json({ error: 'Free users can only create one token' });
-  }
   // Проверка на повтор имени у того же администратора
   const existing = await Token.findOne({ name, adminId: admin._id.toString() });
   if (existing) return res.status(400).json({ error: 'You already created a token with this name' });
@@ -190,8 +214,8 @@ console.log('admin.createdTokens =', admin.createdTokens, '| typeof:', typeof ad
 });
 
 app.post('/api/forgot-password', async (req, res) => {
-  const { email } = req.body;
-  const user = await User.findOne({ email });
+  const email = normalizeEmail(req.body.email);
+  const user = await User.findOne({ email: exactEmailPattern(email) });
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const token = crypto.randomBytes(32).toString('hex');
@@ -204,44 +228,24 @@ app.post('/api/forgot-password', async (req, res) => {
   res.json({ success: true });
 });
 
-// промо код 
+// Legacy compatibility for old clients that still display a promo-code form.
 app.post('/api/promo-codes/redeem', async (req, res) => {
-  const { code } = req.body;
   const authToken = req.headers.authorization?.split(' ')[1];
   const user = await User.findOne({ token: authToken });
   if (!user) return res.status(403).json({ error: 'Invalid token' });
-
-  const promo = await PromoCode.findOne({ code });
-  if (!promo) return res.status(404).json({ error: 'Promo code not found' });
-  if (promo.expiresAt < new Date()) return res.status(400).json({ error: 'Promo code expired' });
-
-  // Назначаем Premium до +1 года
-  const oneYearLater = new Date();
-  oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
-  user.isPremium = true;
-  user.premiumUntil = oneYearLater;
-  await user.save();
-  user.latestReceipt = 'PROMO'; // чтобы `check-subscription` не перезаписывал isPremium
-
-  res.json({ success: true, message: 'Premium activated for 1 year using promo code' });
+  res.json({ success: true, message: 'All Caprizon features are already free' });
 });
 
-// Создание единственного промо-кода FRIENDS2025 (для админа или вручную)
 app.post('/api/promo-codes/create-once', async (req, res) => {
-  const existing = await PromoCode.findOne({ code: 'FRIENDS2025' });
-  if (existing) return res.status(400).json({ error: 'Promo code already exists' });
-
-  await new PromoCode({
-    code: 'FRIENDS2025',
-    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 1 месяц
-  }).save();
-
-  res.json({ success: true });
+  res.status(410).json({ error: 'Promo codes are no longer used' });
 });
 
 
 app.post('/api/reset-password', async (req, res) => {
   const { token, newPassword } = req.body;
+  if (String(newPassword || '').length < 8) {
+    return res.status(400).json({ error: 'Password must contain at least 8 characters' });
+  }
   const reset = await PasswordReset.findOne({ token });
 
   if (!reset || reset.expiresAt < new Date()) {
@@ -251,7 +255,7 @@ app.post('/api/reset-password', async (req, res) => {
   const user = await User.findOne({ email: reset.email });
   if (!user) return res.status(404).json({ error: 'User not found' });
 
-  user.password = newPassword;
+  user.password = await bcrypt.hash(newPassword, 12);
   await user.save();
   await PasswordReset.deleteOne({ token });
 
@@ -260,9 +264,12 @@ app.post('/api/reset-password', async (req, res) => {
 
 // Логин
 app.post('/api/login', async (req, res) => {
-  const { email, password } = req.body;
-  const user = await User.findOne({ email, password });
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+  const email = normalizeEmail(req.body.email);
+  const password = String(req.body.password || '');
+  const user = await User.findOne({ email: exactEmailPattern(email) });
+  if (!user || !(await verifyPassword(user, password))) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
 
   res.json({ token: user.token, userId: user._id.toString() });
 });
@@ -270,7 +277,11 @@ app.post('/api/login', async (req, res) => {
 // Эндпоинт: получить список всех токенов (включая adminId)
 app.get('/api/tokens', async (req, res) => {
   try {
-    const tokens = await Token.find().lean();
+    const user = await authenticatedUser(req);
+    const query = user
+      ? { $or: [{ adminId: user._id.toString() }, { members: user._id.toString() }] }
+      : {};
+    const tokens = await Token.find(query).lean();
     res.json(tokens.map(t => ({
       tokenId: t._id.toString(),
       name: t.name,
@@ -334,85 +345,10 @@ app.post('/api/tokens/mint', async (req, res) => {
 });
 
 app.post('/api/users/upgrade', async (req, res) => {
-  console.log('🚀 /api/users/upgrade called');
   const authToken = req.headers.authorization?.split(' ')[1];
-  console.log('🔐 Получен authToken:', authToken);
-  console.log('📨 Authorization header:', req.headers.authorization);
-  const { receipt, productId } = req.body;
-
-  if (!authToken || !receipt || !productId) {
-    return res.status(400).json({ error: 'Missing token, receipt or productId' });
-  }
-
   const user = await User.findOne({ token: authToken });
   if (!user) return res.status(403).json({ error: 'Invalid token' });
-
-  // StoreKit (Xcode Simulator)
-  if (receipt.startsWith("MIAGCSqGSIb3DQEHAqCA")) {
-    user.isPremium = true;
-    user.latestReceipt = receipt;
-    await user.save();
-    return res.json({ success: true, note: 'StoreKit test receipt accepted' });
-  }
-
-  try {
-    const payload = {
-      'receipt-data': receipt,
-      'password': process.env.APPLE_SHARED_SECRET
-    };
-
-    let response = await axios.post('https://buy.itunes.apple.com/verifyReceipt', payload, {
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    if (response.data.status === 21007) {
-      console.log("ℹ️ Статус 21007 — пробуем Sandbox...");
-      try {
-        response = await axios.post('https://sandbox.itunes.apple.com/verifyReceipt', payload, {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      } catch (sandboxErr) {
-        console.error("❌ Ошибка Sandbox-запроса:", sandboxErr);
-        // ВРЕМЕННЫЙ ОБХОД: активируем подписку несмотря на ошибку
-        user.isPremium = true;
-        await user.save();
-        return res.json({ success: true, bypass: true, note: 'Sandbox verification failed — temporary bypass used' });
-      }
-    }
-
-    console.log("📦 Финальный ответ от Apple:", JSON.stringify(response.data, null, 2));
-
-    if (response.data.status !== 0) {
-      console.error("❌ Невалидный чек:", JSON.stringify(response.data, null, 2));
-      // ВРЕМЕННЫЙ ОБХОД: активируем подписку несмотря на статус ошибки
-      user.isPremium = true;
-      await user.save();
-      return res.json({ success: true, bypass: true, note: 'Invalid receipt status — temporary bypass used' });
-    }
-
-    const latestInfo = response.data.latest_receipt_info || [];
-    const found = latestInfo.some(entry => entry.product_id === productId);
-
-    if (!found && response.data.environment === 'Sandbox') {
-      console.log('⚠️ Пропускаем проверку productId в Sandbox');
-    } else if (!found) {
-      // ВРЕМЕННЫЙ ОБХОД: активируем подписку несмотря на отсутствие productId
-      user.isPremium = true;
-      await user.save();
-      return res.json({ success: true, bypass: true, note: 'Product ID not found — temporary bypass used' });
-    }
-
-    user.isPremium = true;
-    await user.save();
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Apple receipt verification failed:', err);
-    // ВРЕМЕННЫЙ ОБХОД: активируем подписку несмотря на исключение
-    user.isPremium = true;
-    await user.save();
-    res.json({ success: true, bypass: true, note: 'Receipt verification exception — temporary bypass used' });
-  }
+  res.json({ success: true, note: 'All Caprizon features are free' });
 });
 
 // Удалить свой запрос (любой статус)
@@ -441,21 +377,22 @@ app.delete('/api/requests/:requestId', async (req, res) => {
 
 // Эндпоинт для поиска пользователя по e-mail
 app.post('/api/users/search', async (req, res) => {
-  const { email } = req.body;
-  console.log('Received email for search:', email); // Логируем email для отладки
+  const requester = await authenticatedUser(req);
+  if (!requester) return res.status(403).json({ error: 'Invalid token' });
+  const email = normalizeEmail(req.body.email);
 
-  const user = await User.findOne({ email });
+  const user = await User.findOne({ email: exactEmailPattern(email) });
   if (!user) {
-    console.log('User not found with email:', email); // Логируем, если пользователь не найден
     return res.status(404).json({ error: 'User not found' });
   }
 
-  console.log('User found:', user); // Логируем информацию о найденном пользователе
   res.json({ userId: user._id.toString() });
 });
 
 // Получить имя пользователя по userId
 app.get('/api/users/by-id/:id', async (req, res) => {
+  const requester = await authenticatedUser(req);
+  if (!requester) return res.status(403).json({ error: 'Invalid token' });
   const user = await User.findById(req.params.id, 'name email');
   if (!user) return res.status(404).json({ error: 'User not found' });
   res.json({ name: user.name, email: user.email });
@@ -508,8 +445,13 @@ app.get('/api/requests/sent/:requesterId', async (req, res) => {
 });
 
 app.get('/api/tokens/:tokenId/rules', async (req, res) => {
+  const user = await authenticatedUser(req);
+  if (!user) return res.status(403).json({ error: 'Invalid token' });
   const token = await Token.findById(req.params.tokenId);
   if (!token) return res.status(404).json({ error: 'Token not found' });
+  if (!token.members.includes(user._id.toString())) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
   res.json({ rules: token.rules });
 });
 
@@ -518,11 +460,7 @@ app.post('/api/tokens/assign-user', async (req, res) => {
   const header = req.headers.authorization?.split(' ')[1];
   const { tokenId, userId } = req.body;
 
-  console.log("Request body:", req.body);  // Логируем пришедшие данные
-  console.log("Authorization header:", header);  // Логируем авторизационный токен
-
   if (!mongoose.Types.ObjectId.isValid(userId)) {
-    console.log("Invalid user ID format:", userId);  // Логируем ошибку с userId
     return res.status(400).json({ error: 'Invalid user ID format' });
   }
 
@@ -530,28 +468,20 @@ app.post('/api/tokens/assign-user', async (req, res) => {
   const token = await Token.findById(tokenId);
 
   if (!admin || !token || token.adminId !== admin._id.toString()) {
-    console.log("Access denied: Admin doesn't match or invalid token");  // Логируем ошибку с доступом
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  // Логируем, что нашли пользователя
   const user = await User.findById(userId);
   if (!user) {
-    console.log("User not found:", userId);  // Логируем, если пользователь не найден
     return res.status(404).json({ error: 'User not found' });
   }
-
-  // Логируем текущее состояние участников
-  console.log("Token members before update:", token.members); 
 
   // Добавляем пользователя в список участников токена
   if (!token.members.includes(userId)) {
     token.members.push(userId);
-    console.log("User added to token:", userId); // Логируем добавление участника
   }
 
   await token.save();
-  console.log("Token updated successfully:", token);  // Логируем успешное обновление
 
   res.json({ success: true });
 });
@@ -621,9 +551,6 @@ app.post('/api/transfer', async (req, res) => {
   if (!from || !to || from.token !== header || isNaN(amt) || amt <= 0 || !token) {
     return res.status(400).json({ error: 'Invalid transfer' });
   }
-  if (!from.isPremium && from.transactionCount >= 20) {
-    return res.status(403).json({ error: 'Transaction limit reached for free users' });
-  }
   if (!token.members.includes(toUserId)) {
     return res.status(403).json({ error: 'Recipient not in token members' });
   }
@@ -670,6 +597,7 @@ app.get('/api/requests/incoming/:ownerId', async (req, res) => {
   try {
     const header = req.headers.authorization?.split(' ')[1];
     const owner = await User.findOne({ token: header });
+    if (!owner) return res.status(403).json({ error: 'Invalid token' });
     if (!owner || owner._id.toString() !== req.params.ownerId) {
       return res.status(403).json({ error: 'Invalid auth or ownerId mismatch' });
     }
@@ -754,14 +682,22 @@ app.post('/api/requests/:requestId/respond', async (req, res) => {
 // Эндпоинт для получения пользователей токена
 app.get('/api/users/token/:tokenId', async (req, res) => {
   const { tokenId } = req.params;
+  const user = await authenticatedUser(req);
+  if (!user) return res.status(403).json({ error: 'Invalid token' });
   const token = await Token.findById(tokenId);
 
   if (!token) {
     return res.status(404).json({ error: 'Token not found' });
   }
 
-  // Получаем только тех пользователей, которые связаны с этим токеном
-  const users = await User.find({ '_id': { $in: token.members } });
+  if (!token.members.includes(user._id.toString())) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  const users = await User.find(
+    { '_id': { $in: token.members } },
+    '_id name email',
+  );
   res.json(users);
 });
 
@@ -788,7 +724,7 @@ app.delete('/api/users/delete', async (req, res) => {
   }
 });
 
-// ✅ Новый эндпоинт: проверка подписки пользователя
+// Legacy compatibility for published mobile clients.
 app.get('/api/users/check-subscription', async (req, res) => {
   const authToken = req.headers.authorization?.split(' ')[1];
   if (!authToken) return res.status(401).json({ error: 'Missing token' });
@@ -796,49 +732,19 @@ app.get('/api/users/check-subscription', async (req, res) => {
   const user = await User.findOne({ token: authToken });
   if (!user) return res.status(403).json({ error: 'Invalid token' });
 
-    if (!user.latestReceipt || user.latestReceipt === 'PROMO') {
-    return res.json({ isPremium: user.isPremium, note: 'No receipt available' });
-  }
-
-  try {
-    const payload = {
-      'receipt-data': user.latestReceipt,
-      'password': process.env.APPLE_SHARED_SECRET
-    };
-
-    let response = await axios.post('https://buy.itunes.apple.com/verifyReceipt', payload, {
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    if (response.data.status === 21007) {
-      response = await axios.post('https://sandbox.itunes.apple.com/verifyReceipt', payload, {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    if (response.data.status !== 0) {
-      return res.status(400).json({ error: 'Invalid receipt', status: response.data.status });
-    }
-
-    const now = Date.now();
-    const active = (response.data.latest_receipt_info || []).some(entry => {
-      return entry.expires_date_ms && parseInt(entry.expires_date_ms) > now;
-    });
-
-    user.isPremium = active;
-    await user.save();
-
-    res.json({ isPremium: active });
-  } catch (err) {
-    console.error('❌ Subscription check failed:', err);
-    res.status(500).json({ error: 'Subscription check failed' });
-  }
+  res.json({ isPremium: true, note: 'All Caprizon features are free' });
 });
 
 
 // История транзакций по токену с отображением имён
 app.get('/api/transactions/token/:tokenId', async (req, res) => {
   try {
+    const user = await authenticatedUser(req);
+    if (!user) return res.status(403).json({ error: 'Invalid token' });
+    const token = await Token.findById(req.params.tokenId);
+    if (!token || !token.members.includes(user._id.toString())) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     const txs = await Transaction.find({ tokenId: req.params.tokenId }).sort({ timestamp: -1 });
 
     const populated = await Promise.all(txs.map(async tx => {
